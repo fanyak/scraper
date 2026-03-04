@@ -13,6 +13,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from nltk.corpus import stopwords
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import sync_playwright
 from wordcloud import WordCloud
 
 
@@ -46,23 +48,51 @@ def ensure_playwright_chromium() -> None:
         raise RuntimeError(f"Failed to install Playwright Chromium: {details}")
 
 
+def run_playwright_fallback(url: str, script_path: Path) -> dict:
+    script = script_path.read_text(encoding="utf-8")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        context = browser.new_context()
+        page = context.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            data = page.evaluate(script)
+        finally:
+            context.close()
+            browser.close()
+    if not isinstance(data, dict):
+        raise ValueError("Fallback scraper did not return structured JSON data.")
+    return data
+
+
 def run_shot_scraper(url: str, script_path: Path) -> dict:
     ensure_script_file(script_path)
     ensure_playwright_chromium()
-    result = subprocess.run(
-        ["shot-scraper", "javascript", "-i", str(script_path), url],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    output = result.stdout.strip()
     try:
-        return json.loads(output)
-    except json.JSONDecodeError:
-        lines = [line for line in output.splitlines() if line.strip()]
-        if not lines:
-            raise ValueError("Shot-scraper did not return any JSON output.")
-        return json.loads(lines[-1])
+        result = subprocess.run(
+            ["shot-scraper", "javascript", "-i", str(script_path), url],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout.strip()
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            lines = [line for line in output.splitlines() if line.strip()]
+            if not lines:
+                raise ValueError("Shot-scraper did not return any JSON output.")
+            return json.loads(lines[-1])
+    except subprocess.CalledProcessError as exc:
+        stderr_text = (exc.stderr or exc.stdout or "").strip()
+        if "Page.goto: Page crashed" not in stderr_text:
+            raise
+        return run_playwright_fallback(url, script_path)
+    except PlaywrightError:
+        return run_playwright_fallback(url, script_path)
 
 
 def parse_content(data: dict) -> dict[str, str]:
