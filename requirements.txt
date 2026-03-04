@@ -1,0 +1,6 @@
+streamlit
+shot-scraper
+pandas
+matplotlib
+wordcloud
+nltk
