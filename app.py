@@ -4,6 +4,8 @@ import re
 import string
 import subprocess
 import sys
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 from collections import Counter
 from pathlib import Path
 
@@ -68,6 +70,41 @@ def run_playwright_fallback(url: str, script_path: Path) -> dict:
     return data
 
 
+def run_wikipedia_api_fallback(url: str) -> dict:
+    parsed_url = urlparse(url)
+    path_prefix = "/wiki/"
+    if path_prefix not in parsed_url.path:
+        raise ValueError("Wikipedia API fallback requires a /wiki/<title> URL.")
+
+    title = unquote(parsed_url.path.split(path_prefix, 1)[1]).replace("_", " ").strip()
+    if not title:
+        raise ValueError("Could not extract a Wikipedia page title from URL.")
+
+    api_url = (
+        f"{parsed_url.scheme}://{parsed_url.netloc}/w/api.php"
+        f"?action=parse&page={title.replace(' ', '%20')}"
+        "&prop=text|title&format=json&formatversion=2&redirects=1"
+    )
+    request = Request(api_url, headers={"User-Agent": "wiki-shot-scraper/1.0"})
+    with urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    parse_data = payload.get("parse") if isinstance(payload, dict) else None
+    if not parse_data:
+        raise ValueError("Wikipedia API fallback did not return page content.")
+
+    page_title = parse_data.get("title", title)
+    page_html = parse_data.get("text", "")
+    if not page_html:
+        raise ValueError("Wikipedia API fallback returned empty page HTML.")
+
+    return {
+        "obj": {page_title: [f"<div>{page_html}</div>"]},
+        "order": [page_title],
+        "tags": ["h1"],
+    }
+
+
 def run_shot_scraper(url: str, script_path: Path) -> dict:
     ensure_script_file(script_path)
     ensure_playwright_chromium()
@@ -90,9 +127,15 @@ def run_shot_scraper(url: str, script_path: Path) -> dict:
         stderr_text = (exc.stderr or exc.stdout or "").strip()
         if "Page.goto: Page crashed" not in stderr_text:
             raise
-        return run_playwright_fallback(url, script_path)
+        try:
+            return run_playwright_fallback(url, script_path)
+        except Exception:
+            return run_wikipedia_api_fallback(url)
     except PlaywrightError:
-        return run_playwright_fallback(url, script_path)
+        try:
+            return run_playwright_fallback(url, script_path)
+        except Exception:
+            return run_wikipedia_api_fallback(url)
 
 
 def parse_content(data: dict) -> dict[str, str]:
