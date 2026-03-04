@@ -9,3 +9,4 @@ libxfixes3
 libxrandr2
 libgbm1
 libxkbcommon0
+libasound2t64
