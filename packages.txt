@@ -7,3 +7,4 @@ libxcomposite1
 libxdamage1
 libxfixes3
 libxrandr2
+libgbm1
