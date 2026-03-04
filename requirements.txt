@@ -1,5 +1,6 @@
 streamlit
 shot-scraper
+playwright
 pandas
 matplotlib
 wordcloud

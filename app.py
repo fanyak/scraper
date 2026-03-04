@@ -3,6 +3,7 @@ import json
 import re
 import string
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -31,8 +32,23 @@ def ensure_script_file(script_path: Path) -> None:
         script_path.write_text(DEFAULT_SCRIPT, encoding="utf-8")
 
 
+@st.cache_resource
+def ensure_playwright_chromium() -> None:
+    # sys.executable is the path to /bin/python that the app runs with, 
+    # which ensures the playwright installation is in the same environment
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"Failed to install Playwright Chromium: {details}")
+
+
 def run_shot_scraper(url: str, script_path: Path) -> dict:
     ensure_script_file(script_path)
+    ensure_playwright_chromium()
     result = subprocess.run(
         ["shot-scraper", "javascript", "-i", str(script_path), url],
         check=True,
